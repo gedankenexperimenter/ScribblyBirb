@@ -90,6 +90,113 @@
 // Support changing shifted chars
 #include "Kaleidoscope-CharShift.h"
 
+// -----------------------------------------------------------------------------
+// EventLogger plugin
+namespace kaleidoscope {
+namespace plugin {
+
+class EventLogger : public Plugin {
+ public:
+  EventHandlerResult onKeyswitchEvent(KeyEvent &event) {
+    // If the plugin has already processed and released this event, ignore it.
+    // There's no need to update the event tracker explicitly.
+    if (event_tracker_.shouldIgnore(event))
+      return EventHandlerResult::OK;
+
+    // If `event.addr` is valid, or `event.state` is explicitly marked as
+    // injected, ignore the event.
+    if (! event.addr.isValid() || (event.state & INJECTED) != 0)
+      return EventHandlerResult::OK;
+
+    if (!active_)
+      return EventHandlerResult::OK;
+
+    uint16_t current_time = Kaleidoscope.millisAtCycleStart();
+
+    if (keyToggledOn(event.state)) {
+      Serial.print(F("SD,"));
+    } else {
+      Serial.print(F("SU,"));
+    }
+
+    Serial.print(event.id(), DEC);
+    Serial.print(F(","));
+    Serial.print(event.addr.toInt(), HEX);
+    Serial.print(F(","));
+    Serial.print(event.key.getRaw(), HEX);
+    Serial.print(F(","));
+
+    Serial.println(current_time, DEC);
+
+    return EventHandlerResult::OK;
+  }
+
+  EventHandlerResult onKeyEvent(KeyEvent &event) {
+    // If `event.addr` is valid, or `event.state` is explicitly marked as
+    // injected, ignore the event.
+    if (! event.addr.isValid() || (event.state & INJECTED) != 0)
+      return EventHandlerResult::OK;
+
+    if (!active_)
+      return EventHandlerResult::OK;
+
+    uint16_t current_time = Kaleidoscope.millisAtCycleStart();
+
+    if (keyToggledOn(event.state)) {
+      Serial.print(F("KD,"));
+    } else {
+      Serial.print(F("KU,"));
+    }
+
+    Serial.print(event.id(), DEC);
+    Serial.print(F(","));
+    Serial.print(event.addr.toInt(), HEX);
+    Serial.print(F(","));
+    Serial.print(event.key.getRaw(), HEX);
+    Serial.print(F(","));
+
+    Serial.println(current_time, DEC);
+
+    return EventHandlerResult::OK;
+  }
+
+  EventHandlerResult beforeSyncingLeds() {
+    if (!active_)
+     return EventHandlerResult::OK;
+
+    for (auto key_addr : KeyAddr::all()) {
+      if (live_keys[key_addr] != Key_Inactive) {
+        ::LEDControl.setCrgbAt(key_addr, highlight_color_);
+      } else {
+        ::LEDControl.refreshAt(key_addr);
+      }
+    }
+    return EventHandlerResult::OK;
+  }
+
+  void toggle() {
+    active_ = !active_;
+  }
+  void activate() {
+    active_ = true;
+  }
+  void deactivate() {
+    active_ = false;
+    ::LEDControl.refreshAll();
+  }
+
+ private:
+  KeyEventTracker event_tracker_;
+  bool active_{false};
+  cRGB highlight_color_ = CRGB(160, 160, 0);
+};
+
+}  // namespace plugin
+}  // namespace kaleidoscope
+
+kaleidoscope::plugin::EventLogger EventLogger;
+// -----------------------------------------------------------------------------
+
 /** This 'enum' is a list of all the macros used by the Model 100's firmware
   * The names aren't particularly important. What is important is that each
   * is unique.
@@ -105,6 +212,7 @@
 
 enum {
   MACRO_VERSION_INFO,
+  MACRO_TOGGLE_EVENT_LOGGER,
 };
 
 /** This 'enum' is a list of all CharShifted keys.
@@ -214,7 +322,7 @@ enum {
 
 KEYMAPS(
   [PRIMARY] = KEYMAP_STACKED
-  (___, ___,           ___,      ___,      ___,      ___,   ___,
+  (___, ___,           ___,      ___,      ___,      ___,   M(MACRO_TOGGLE_EVENT_LOGGER),
    ___, Key_J,         Key_G,    Key_M,    Key_P,    Key_V, ___,
    ___, GUI_T(R),      ALT_T(S), CTL_T(N), SFT_T(D), Key_B,
    ___, LT(BUTTON, X), Key_F,    Key_L,    Key_C,    Key_W, ___,
@@ -561,6 +669,11 @@ const macro_t *macroAction(uint8_t macro_id, KeyEvent &event) {
   case MACRO_VERSION_INFO:
     versionInfoMacro(event.state);
     break;
+
+  case MACRO_TOGGLE_EVENT_LOGGER:
+    if (keyToggledOn(event.state))
+     EventLogger.toggle();
+    break;
   }
   return MACRO_NONE;
 }
@@ -649,6 +762,10 @@ USE_MAGIC_COMBOS({.action = toggleKeyboardProtocol,
 // The order can be important. For example, LED effects are
 // added in the order they're listed here.
 KALEIDOSCOPE_INIT_PLUGINS(
+  // This is a key logger plugin, and should only be used for debugging.  It
+  // should be initialized ahead of all other plugins.
+  EventLogger,
+
   // The EEPROMSettings & EEPROMKeymap plugins make it possible to have an
   // editable keymap in EEPROM.
   EEPROMSettings,
